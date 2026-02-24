@@ -1,29 +1,25 @@
+import logging
 import os
 import pickle
 import uuid
-import warnings
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 import ray
+import torch
 from ray.experimental import (
     CommunicatorMetadata,
     TensorTransportManager,
     TensorTransportMetadata,
 )
 
-if TYPE_CHECKING:
-    import torch
+from ray_ascend.direct_transport.yr_tensor_transport_util import (
+    CPUClientAdapter,
+    NPUClientAdapter,
+)
 
-try:
-    import torch
-    import torch_npu
-    from yr.datasystem import DsTensorClient
-except ImportError as e:
-    raise ImportError(
-        "The 'yr_tensor_transport' feature requires yr optional dependencies. "
-        "Please install them with: pip install 'ray-ascend[yr]'"
-    ) from e
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -38,7 +34,7 @@ class YRTransportMetadata(TensorTransportMetadata):
         ds_serialized_keys: Serialized tensor keys for YR transport.
     """
 
-    ds_serialized_keys: bytes
+    ds_serialized_keys: bytes = field(default=b"")
 
     __eq__ = object.__eq__
     __hash__ = object.__hash__
@@ -49,16 +45,9 @@ class YRTensorTransport(TensorTransportManager):
         """
         Prepares the env for lazily initializing the YR DS client.
         """
-        self._ds_client = None
-        self._ds_worker_host = os.getenv("YR_DS_WORKER_HOST")
-        self._ds_worker_port = int(os.getenv("YR_DS_WORKER_PORT"))
-        npu_ids = os.getenv("ASCEND_RT_VISIBLE_DEVICES")
-        if len(npu_ids) > 1:
-            warnings.warn(
-                f"Data system requires exactly 1 NPU, but detected {len(npu_ids)} "
-                f"NPUs. Will use the first NPU (ID: {npu_ids[0]}) to connect "
-                "to the data system"
-            )
+        self._ds_client = dict()
+        self._ds_worker_host = None
+        self._ds_worker_port = None
 
     def tensor_transport_backend(self) -> str:
         return "YR"
@@ -71,30 +60,49 @@ class YRTensorTransport(TensorTransportManager):
     def can_abort_transport() -> bool:
         return False
 
-    def get_ds_client(self):
+    def get_ds_client(self, device_type: str):
         """
         Creates a YR DS client if it does not already exist.
         """
-        if self._ds_client is not None:
-            return self._ds_client
+        if self._ds_client.get(device_type) is not None:
+            return self._ds_client[device_type]
+
+        self._ds_worker_host = os.getenv("YR_DS_WORKER_HOST")
+        port = os.getenv("YR_DS_WORKER_PORT")
+        if not self._ds_worker_host or not port:
+            raise RuntimeError(
+                "Yuanrong datasystem worker env not set. "
+                "Please set YR_DS_WORKER_HOST and YR_DS_WORKER_PORT."
+            )
+        self._ds_worker_port = int(port)
+        logger.info(
+            f"Datasystem worker address: {self._ds_worker_host}:{self._ds_worker_port}"
+        )
 
         try:
-            self._ds_client = DsTensorClient(
-                host=self._ds_worker_host,
-                port=self._ds_worker_port,
-                device_id=0,
-                connect_timeout_ms=60000,
+            if device_type == "npu":
+                self._ds_client["npu"] = NPUClientAdapter(
+                    self._ds_worker_host, self._ds_worker_port
+                )
+            else:
+                self._ds_client["cpu"] = CPUClientAdapter(
+                    self._ds_worker_host, self._ds_worker_port
+                )
+            self._ds_client[device_type].init()
+            logger.info(
+                f"Succeed to initialize Yuanrong Datasystem client for "
+                f"device type {device_type} "
+                f"at {self._ds_worker_host}:{self._ds_worker_port}"
             )
-            self._ds_client.init()
         except Exception as e:
-            self._ds_client = None
+            self._ds_client.pop(device_type, None)
             raise RuntimeError(
-                f"Failed to initialize YR DS client at"
+                f"Failed to initialize Yuanrong Datasystem client at"
                 f"{self._ds_worker_host}:{self._ds_worker_port}. "
                 f"Error: {e}"
             ) from e
 
-        return self._ds_client
+        return self._ds_client[device_type]
 
     def actor_has_tensor_transport(self, actor: "ray.actor.ActorHandle") -> bool:
         # TODO(haichuan): Check if yr ds worker is connectable.
@@ -110,12 +118,14 @@ class YRTensorTransport(TensorTransportManager):
             RuntimeError: If the DS client fails to call dev_mset.
         """
         keys = [f"tensor_{uuid.uuid4()}" for _ in tensors]
-        ds_client = self.get_ds_client()
+        device_type = tensors[0].device.type
+        ds_client = self.get_ds_client(device_type)
         try:
-            ds_client.dev_mset(keys=keys, tensors=tensors)
+            ds_client.put(keys=keys, tensors=tensors)
+            logger.info(f"Succeed to put {len(tensors)} tensors")
         except Exception as e:
             raise RuntimeError(
-                f"Failed to dev_mset {len(tensors)} tensors to "
+                f"Failed to put {len(tensors)} tensors to "
                 f"{self._ds_worker_host}:{self._ds_worker_port}. Error: {e}"
             ) from e
 
@@ -127,7 +137,6 @@ class YRTensorTransport(TensorTransportManager):
         gpu_object: List["torch.Tensor"],
     ) -> YRTransportMetadata:
 
-        device = None
         tensor_meta = []
         if not gpu_object:
             raise ValueError("GPU object list is empty.")
@@ -177,16 +186,14 @@ class YRTensorTransport(TensorTransportManager):
         serialized_keys = tensor_transport_metadata.ds_serialized_keys
         keys = pickle.loads(serialized_keys)
 
-        ds_client = self.get_ds_client()
+        device_type = device.type
+        ds_client = self.get_ds_client(device_type)
         try:
-            ds_client.dev_mget(
-                keys=keys,
-                tensors=tensors,
-                sub_timeout_ms=30000,
-            )
+            ds_client.get(keys=keys, tensors=tensors)
+            logger.info(f"Succeed to get {len(tensors)} tensors")
         except Exception as e:
             raise RuntimeError(
-                f"Failed to dev_mget {len(tensors)} tensors from "
+                f"Failed to get {len(tensors)} tensors from "
                 f"{self._ds_worker_host}:{self._ds_worker_port}. Error: {e}"
             ) from e
 
@@ -199,7 +206,7 @@ class YRTensorTransport(TensorTransportManager):
         communicator_metadata: CommunicatorMetadata,
     ):
         raise NotImplementedError(
-            "DS transport does not support send_multiple_tensors,"
+            "Datasystem transport does not support send_multiple_tensors,"
             "since it is a one-sided transport."
         )
 
@@ -210,14 +217,16 @@ class YRTensorTransport(TensorTransportManager):
     ):
         assert isinstance(tensor_transport_meta, YRTransportMetadata)
         serialized_keys = tensor_transport_meta.ds_serialized_keys
+        device_type = tensor_transport_meta.tensor_device.type
         if serialized_keys is not None:
             keys = pickle.loads(serialized_keys)
-            ds_client = self.get_ds_client()
+            ds_client = self.get_ds_client(device_type)
             try:
-                ds_client.dev_delete(keys=keys)
+                ds_client.delete(keys=keys)
+                logger.info("Succeed to delete all keys")
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to dev_delete {len(keys)} keys for object {obj_id} "
+                    f"Failed to delete {len(keys)} keys for object {obj_id} "
                     f"at {self._ds_worker_host}:{self._ds_worker_port}. Error: {e}"
                 ) from e
 
@@ -226,4 +235,4 @@ class YRTensorTransport(TensorTransportManager):
         obj_id: str,
         communicator_metadata: CommunicatorMetadata,
     ):
-        raise NotImplementedError("YR transport does not support aborting.")
+        raise NotImplementedError("Yuanrong transport does not support aborting.")
