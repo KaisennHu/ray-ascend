@@ -141,3 +141,35 @@ def test_garbage_collect(device_case, tensors, mock_client, patch_client):
         mock_client.delete.assert_called_once()
     else:
         mock_client.dev_delete.assert_called_once()
+
+
+def test_actor_has_tensor_transport(device_case, mock_client, patch_client):
+    """
+    Tests that actor_has_tensor_transport returns True when the remote health check succeeds.
+    """
+    mock_actor = MagicMock()
+
+    mock_ray_call_chain = MagicMock()
+    mock_actor.__ray_call__ = mock_ray_call_chain
+
+    mock_ray_call_chain.options.return_value = mock_ray_call_chain
+    mock_ray_call_chain.remote.return_value = "mock_object_ref"
+
+    with patch("ray.get", return_value=True) as mock_ray_get:
+        transport = YRTensorTransport()
+
+        result = transport.actor_has_tensor_transport(mock_actor)
+
+        # Assert the final result is True
+        assert result is True
+
+        # Assert ray.get was called exactly once with the mocked object reference
+        mock_ray_get.assert_called_once_with("mock_object_ref")
+
+        # Verify options was called exactly once with the correct concurrency_group
+        mock_ray_call_chain.options.assert_called_once_with(
+            concurrency_group="_ray_system"
+        )
+
+        # Verify remote was called exactly once on the object returned by options()
+        mock_ray_call_chain.remote.assert_called_once()

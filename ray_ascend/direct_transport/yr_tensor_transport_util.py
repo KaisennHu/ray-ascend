@@ -62,6 +62,9 @@ class CPUClientAdapter(BaseDSAdapter):
         failed_keys = self._client.delete(keys=keys)
         raise_if_failed(failed_keys, "delete")
 
+    def health_check(self):
+        return self._client.health_check().is_ok()
+
 
 class NPUClientAdapter(BaseDSAdapter):
     def __init__(self, host, port):

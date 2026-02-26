@@ -21,7 +21,6 @@ from ray_ascend.direct_transport.yr_tensor_transport_util import (
 logger = logging.getLogger(__name__)
 
 
-
 @dataclass
 class YRCommunicatorMetadata(CommunicatorMetadata):
     """Metadata for the YR communicator."""
@@ -105,8 +104,29 @@ class YRTensorTransport(TensorTransportManager):
         return self._ds_client[device_type]
 
     def actor_has_tensor_transport(self, actor: "ray.actor.ActorHandle") -> bool:
-        # TODO(haichuan): Check if yr ds worker is connectable.
-        return True
+        def __ray_actor_has_tensor_transport__(
+            self: "ray.actor.ActorHandle",
+        ) -> bool:
+            # Check if yr.datasystem worker is healthy
+            try:
+                from ray.experimental.gpu_object_manager.util import (
+                    get_tensor_transport_manager,
+                )
+
+                return ( # type: ignore[no-any-return]
+                    get_tensor_transport_manager("YR")
+                    .get_ds_client("cpu")
+                    .health_check()
+                )
+            except Exception as e:
+                logger.error(f"Raise Exception during health check: {e}")
+                return False
+
+        return ray.get( # type: ignore[no-any-return]
+            actor.__ray_call__.options(concurrency_group="_ray_system").remote(
+                __ray_actor_has_tensor_transport__
+            )
+        )
 
     def get_ds_metadata(self, tensors: List["torch.Tensor"]) -> bytes:
         """Get DS metadata for a set of tensors.
