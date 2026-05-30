@@ -1,4 +1,10 @@
 import pytest
+
+pytest.importorskip(
+    "ray.util.collective.backend_registry",
+    reason="HCCL tensor transport requires Ray >= 2.56",
+)
+
 import ray
 import torch
 from ray.experimental.collective import create_collective_group

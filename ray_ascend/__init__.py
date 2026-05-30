@@ -94,6 +94,8 @@ def register_hccl_collective_backend() -> None:
     """
     Register HCCL collective backend for Ray.
 
+    Requires Ray >= 2.56. For older Ray versions, this API is not available.
+
     This function must be called in each Ray worker/actor process
     before using HCCL collective operations.
 
@@ -116,7 +118,16 @@ def register_hccl_collective_backend() -> None:
             group_name="my_group",
         )
     """
-    from ray.util.collective.backend_registry import register_collective_backend
+    try:
+        from ray.util.collective.backend_registry import register_collective_backend
+    except ImportError as e:
+        import ray
+
+        raise RuntimeError(
+            f"register_hccl_collective_backend requires Ray >= 2.56, "
+            f"but Ray {ray.__version__} is installed. "
+            f"Please upgrade: pip install 'ray>=2.56'"
+        ) from e
 
     from .collective.hccl_collective_group import HCCLGroup
 
@@ -126,6 +137,8 @@ def register_hccl_collective_backend() -> None:
 def register_hccl_tensor_transport() -> None:
     """
     Register HCCL backend and tensor transport for Ray.
+
+    Requires Ray >= 2.56. For older Ray versions, this API is not available.
 
     This function must be called in each Ray worker/actor process
     before using HCCL collective operations or tensor transport.

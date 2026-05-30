@@ -139,6 +139,13 @@ npu_tensor = ray.get(sender.transfer_npu_tensor_via_hccs.remote())
 cpu_tensor = ray.get(sender.transfer_cpu_tensor_via_rdma.remote())
 ```
 
+## Ray Version Compatibility
+
+| Ray Version | YR Transport | HCCL Collective | HCCL Tensor Transport (RDT) |
+|-------------|-------------|-----------------|-----------------------------|
+| 2.55        | ✅          | ❌              | ❌                           |
+| >= 2.56     | ✅          | ✅              | ✅                           |
+
 ## Contributing
 
 See [CONTRIBUTING](./CONTRIBUTING.md) and [developer guide](https://ascend.github.io/ray-ascend/developer_guide/) for more details—a step-by-step guide to help

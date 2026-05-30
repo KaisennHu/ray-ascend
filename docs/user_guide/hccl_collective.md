@@ -1,9 +1,11 @@
 # HCCL Collective Communication
 
-> _Last updated: 03/24/2026_
+> _Last updated: 05/30/2026_
 
 ray-ascend provides HCCL (Huawei Collective Communication Library) support for
 distributed collective operations across Ray actors.
+
+> **Note**: HCCL collective backend requires Ray >= 2.56.
 
 ## Available Collective Operations
 
