@@ -38,12 +38,6 @@ For performance benchmarks, see the [Performance Benchmark Report](./docs/develo
   - torch == 2.7.1, torch-npu == 2.7.1.post1
   - Ray (same version as ray-ascend)
 
-## Version
-
-| Version   | Release Type             | Doc |
-| --------- | ------------------------ | --- |
-| 0.54.0rc1 | Latest Release Candidate |     |
-
 ## Quick Start
 
 ### Installation
