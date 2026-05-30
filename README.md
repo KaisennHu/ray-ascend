@@ -143,7 +143,7 @@ cpu_tensor = ray.get(sender.transfer_cpu_tensor_via_rdma.remote())
 
 | Ray Version | YR Transport | HCCL Collective | HCCL Tensor Transport (RDT) |
 |-------------|-------------|-----------------|-----------------------------|
-| 2.55        | ✅          | ❌              | ❌                           |
+| >=2.55, <2.56 | ✅        | ❌              | ❌                           |
 | >= 2.56     | ✅          | ✅              | ✅                           |
 
 ## Contributing

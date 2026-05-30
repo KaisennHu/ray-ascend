@@ -164,7 +164,7 @@ class HCCLGroup(BaseGroup):
     @classmethod
     def backend(cls) -> Backend:
         """Return the backend type for this group."""
-        return "HCCL"
+        return Backend.HCCL
 
     @classmethod
     def check_backend_availability(cls) -> bool:
