@@ -2,7 +2,7 @@ import ctypes
 import datetime
 import logging
 import time
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union
 
 import ray
 import torch
@@ -622,11 +622,13 @@ class HCCLGroup(BaseGroup):
         self._stream = stream
         self._device = device
 
-    def _validate_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Validate a single tensor and return it.
+    def _validate_tensor(
+        self, tensor: Union[torch.Tensor, List[torch.Tensor]]
+    ) -> torch.Tensor:
+        """Validate a tensor and return it.
 
-        Enforces the single-device constraint and checks that the tensor device
-        matches the communicator's initialization device.
+        Accepts a Tensor or a single-element list (unwrapped automatically).
+        Enforces single-device constraint against the communicator's device.
         """
         # If the input is a list of tensors, we only support single tensor list for now.
         # We will extract the single tensor out for validation.
